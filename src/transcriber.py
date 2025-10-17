@@ -74,9 +74,17 @@ class Transcriber:
         self,
         audio_path: str,
         verbose: bool = True,
-        temperature: float = 0.0,
+        temperature: tuple = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
         beam_size: int = 5,
-        best_of: int = 5
+        best_of: int = 5,
+        condition_on_previous_text: bool = False,
+        no_speech_threshold: float = 0.6,
+        logprob_threshold: float = -1.0,
+        compression_ratio_threshold: float = 2.4,
+        initial_prompt: str = "This is a Japanese anime video.",
+        hallucination_silence_threshold: Optional[float] = 0.5,
+        word_timestamps: bool = True,
+        patience: float = 2.0
     ) -> List[Dict]:
         """
         음성 파일을 텍스트로 변환
@@ -84,9 +92,17 @@ class Transcriber:
         Args:
             audio_path: 입력 오디오 파일 경로
             verbose: 진행 상황 출력 여부
-            temperature: 샘플링 temperature (0.0 = greedy, 높을수록 다양)
+            temperature: 샘플링 temperature tuple (fallback 메커니즘)
             beam_size: beam search 크기 (높을수록 정확하지만 느림)
             best_of: 여러 후보 중 선택 (높을수록 정확하지만 느림)
+            condition_on_previous_text: 이전 텍스트 의존 여부 (False=반복 방지)
+            no_speech_threshold: 무음 감지 임계값 (높을수록 무음 민감)
+            logprob_threshold: 낮은 확률 세그먼트 필터링 임계값
+            compression_ratio_threshold: 반복 텍스트 감지 임계값
+            initial_prompt: 모델에 제공할 컨텍스트 프롬프트
+            hallucination_silence_threshold: 무음 구간 hallucination 특화 임계값
+            word_timestamps: 단어 단위 타임스탬프 생성 여부
+            patience: Beam search 조기 종료 방지 계수
 
         Returns:
             타임스탬프 포함 텍스트 세그먼트 리스트
@@ -112,9 +128,10 @@ class Transcriber:
             print(f"   - 언어: {self.language}")
             print(f"   - Beam size: {beam_size}")
             print(f"   - Temperature: {temperature}")
+            print(f"   - Hallucination 방지: ON (이전 텍스트 의존 OFF)")
 
         try:
-            # Whisper 실행
+            # Whisper 실행 (Hallucination 방지 파라미터 적용)
             result = self.model.transcribe(
                 str(audio_path),
                 language=self.language,
@@ -122,6 +139,14 @@ class Transcriber:
                 temperature=temperature,
                 beam_size=beam_size,
                 best_of=best_of,
+                condition_on_previous_text=condition_on_previous_text,
+                no_speech_threshold=no_speech_threshold,
+                logprob_threshold=logprob_threshold,
+                compression_ratio_threshold=compression_ratio_threshold,
+                initial_prompt=initial_prompt,
+                hallucination_silence_threshold=hallucination_silence_threshold,
+                word_timestamps=word_timestamps,
+                patience=patience,
                 fp16=(self.device == "cuda")  # GPU면 FP16 사용
             )
 
