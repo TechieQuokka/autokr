@@ -13,6 +13,21 @@ from audio_extractor import AudioExtractor
 from subtitle_gen import SubtitleGenerator
 
 
+def get_python_executable():
+    """PyInstaller 환경에서 올바른 Python 실행 파일 경로 반환"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller로 빌드된 환경
+        # 시스템의 Python 인터프리터를 찾아서 사용
+        import shutil
+        python_exec = shutil.which('python3') or shutil.which('python')
+        if not python_exec:
+            raise RuntimeError("시스템에서 Python 인터프리터를 찾을 수 없습니다. Python이 설치되어 있는지 확인하세요.")
+        return python_exec
+    else:
+        # 일반 Python 환경
+        return sys.executable
+
+
 def main():
     """CLI 진입점"""
     parser = argparse.ArgumentParser(
@@ -50,9 +65,9 @@ def main():
 
     parser.add_argument(
         '-t', '--translate',
-        default='facebook/nllb-200-1.3B',
+        default='facebook/nllb-200-3.3B',
         choices=['facebook/nllb-200-distilled-600M', 'facebook/nllb-200-1.3B', 'facebook/nllb-200-3.3B'],
-        help='번역 모델 (기본값: facebook/nllb-200-1.3B)'
+        help='번역 모델 (기본값: facebook/nllb-200-3.3B)'
     )
 
     parser.add_argument(
@@ -121,9 +136,16 @@ def main():
         temp_transcription.parent.mkdir(parents=True, exist_ok=True)
 
         # Whisper 워커 프로세스 실행
-        worker_script = Path(__file__).parent / "worker_transcribe.py"
+        if getattr(sys, 'frozen', False):
+            # PyInstaller 빌드 환경: _internal 디렉토리에서 스크립트 찾기
+            base_path = Path(sys._MEIPASS)
+            worker_script = base_path / "src" / "worker_transcribe.py"
+        else:
+            # 일반 Python 환경
+            worker_script = Path(__file__).parent / "worker_transcribe.py"
+
         cmd = [
-            sys.executable,  # python3 경로
+            get_python_executable(),  # 올바른 Python 인터프리터
             str(worker_script),
             str(audio_path),
             args.whisper,
@@ -152,9 +174,16 @@ def main():
         temp_translation = Path("temp/translation.json")
 
         # NLLB 워커 프로세스 실행
-        worker_script = Path(__file__).parent / "worker_translate.py"
+        if getattr(sys, 'frozen', False):
+            # PyInstaller 빌드 환경: _internal 디렉토리에서 스크립트 찾기
+            base_path = Path(sys._MEIPASS)
+            worker_script = base_path / "src" / "worker_translate.py"
+        else:
+            # 일반 Python 환경
+            worker_script = Path(__file__).parent / "worker_translate.py"
+
         cmd = [
-            sys.executable,  # python3 경로
+            get_python_executable(),  # 올바른 Python 인터프리터
             str(worker_script),
             str(temp_transcription),
             args.translate,
