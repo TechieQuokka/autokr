@@ -5,11 +5,11 @@ AutoKR - CLI Interface
 
 import argparse
 import sys
+import subprocess
+import json
 from pathlib import Path
 
 from audio_extractor import AudioExtractor
-from transcriber import Transcriber
-from translator import Translator
 from subtitle_gen import SubtitleGenerator
 
 
@@ -29,9 +29,9 @@ def main():
 
     parser.add_argument(
         '-o', '--output',
-        required=True,
+        required=False,
         type=str,
-        help='출력 자막 파일 경로'
+        help='출력 자막 파일 경로 (미지정시 입력 파일명 기반 자동 생성)'
     )
 
     parser.add_argument(
@@ -75,10 +75,15 @@ def main():
         print(f"오류: 입력 파일을 찾을 수 없습니다: {args.input}", file=sys.stderr)
         sys.exit(1)
 
-    # 출력 경로 검증
-    output_path = Path(args.output)
+    # 출력 경로 자동 생성 또는 검증
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        # 입력 파일명에서 확장자를 제거하고 format에 맞는 확장자 추가
+        output_path = input_path.parent / f"{input_path.stem}.{args.format}"
+
     if output_path.exists():
-        response = input(f"파일이 이미 존재합니다: {args.output}. 덮어쓰시겠습니까? (y/n): ")
+        response = input(f"파일이 이미 존재합니다: {output_path}. 덮어쓰시겠습니까? (y/n): ")
         if response.lower() != 'y':
             print("작업이 취소되었습니다.")
             sys.exit(0)
@@ -107,35 +112,68 @@ def main():
         )
         print(f"✅ 오디오 추출 완료: {audio_path}")
 
-        # 2. 음성 → 텍스트 (Whisper)
+        # 2. 음성 → 텍스트 (Whisper) - 별도 프로세스
         print("\n🎤 Step 2/4: 음성 → 텍스트 변환 (Whisper)")
         print("-" * 60)
-        transcriber = Transcriber(
-            model_name=args.whisper,
-            language=args.language
-        )
-        result = transcriber.transcribe_with_full_text(
-            str(audio_path),
-            verbose=True
-        )
-        print(f"✅ 음성 변환 완료: {len(result['segments'])}개 세그먼트")
-        transcriber.clear_cache()
 
-        # 3. 번역 (일본어 → 한국어)
+        # 중간 결과 저장 경로
+        temp_transcription = Path("temp/transcription.json")
+        temp_transcription.parent.mkdir(parents=True, exist_ok=True)
+
+        # Whisper 워커 프로세스 실행
+        worker_script = Path(__file__).parent / "worker_transcribe.py"
+        cmd = [
+            sys.executable,  # python3 경로
+            str(worker_script),
+            str(audio_path),
+            args.whisper,
+            args.language,
+            str(temp_transcription)
+        ]
+
+        print(f"   🚀 Whisper 프로세스 시작 (별도 메모리 공간)")
+        result = subprocess.run(cmd, check=True)
+
+        if result.returncode != 0:
+            raise RuntimeError("Whisper 변환 프로세스 실패")
+
+        # 결과 로드
+        transcription_data = json.loads(temp_transcription.read_text(encoding='utf-8'))
+        print(f"✅ 음성 변환 완료: {len(transcription_data['segments'])}개 세그먼트")
+        print(f"   💾 중간 결과 저장: {temp_transcription}")
+
+        # 프로세스가 종료되면서 Whisper 모델의 GPU 메모리가 자동으로 해제됨!
+
+        # 3. 번역 (일본어 → 한국어) - 별도 프로세스
         print("\n🌐 Step 3/4: 번역 (일본어 → 한국어)")
         print("-" * 60)
-        translator = Translator(
-            model_name=args.translate,
-            source_lang="jpn_Jpan",
-            target_lang="kor_Hang"
-        )
-        translated_segments = translator.translate_segments(
-            result['segments'],
-            verbose=True,
-            batch_size=8
-        )
+
+        # 번역 결과 저장 경로
+        temp_translation = Path("temp/translation.json")
+
+        # NLLB 워커 프로세스 실행
+        worker_script = Path(__file__).parent / "worker_translate.py"
+        cmd = [
+            sys.executable,  # python3 경로
+            str(worker_script),
+            str(temp_transcription),
+            args.translate,
+            "8",  # batch_size
+            str(temp_translation)
+        ]
+
+        print(f"   🚀 번역 프로세스 시작 (별도 메모리 공간)")
+        result = subprocess.run(cmd, check=True)
+
+        if result.returncode != 0:
+            raise RuntimeError("번역 프로세스 실패")
+
+        # 결과 로드
+        translated_segments = json.loads(temp_translation.read_text(encoding='utf-8'))
         print(f"✅ 번역 완료: {len(translated_segments)}개 세그먼트")
-        translator.clear_cache()
+        print(f"   💾 중간 결과 저장: {temp_translation}")
+
+        # 프로세스가 종료되면서 NLLB 모델의 GPU 메모리가 자동으로 해제됨!
 
         # 4. 자막 파일 생성
         print("\n📝 Step 4/4: 자막 파일 생성")
@@ -155,7 +193,15 @@ def main():
             extractor.cleanup()
             print("✅ 임시 오디오 파일 삭제됨")
         else:
-            print(f"ℹ️  오디오 파일 유지: {audio_path}")        
+            print(f"ℹ️  오디오 파일 유지: {audio_path}")
+
+        # 중간 JSON 파일 정리
+        if temp_transcription.exists():
+            temp_transcription.unlink()
+            print("✅ 중간 변환 파일 삭제됨")
+        if temp_translation.exists():
+            temp_translation.unlink()
+            print("✅ 중간 번역 파일 삭제됨")        
 
         print("\n" + "=" * 60)
         print("✅ 모든 작업 완료!")
