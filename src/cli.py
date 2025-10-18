@@ -3,6 +3,8 @@ AutoKR - CLI Interface
 일본어 동영상 자막 자동 생성 시스템
 """
 
+__version__ = "1.0.1"
+
 import argparse
 import sys
 import subprocess
@@ -33,6 +35,13 @@ def main():
     parser = argparse.ArgumentParser(
         description='AutoKR - 일본어 동영상 자막 자동 생성',
         formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument(
+        '-v', '--version',
+        action='version',
+        version=f'AutoKR {__version__}',
+        help='버전 정보 출력'
     )
 
     parser.add_argument(
@@ -187,7 +196,7 @@ def main():
             str(worker_script),
             str(temp_transcription),
             args.translate,
-            "8",  # batch_size
+            "16",  # batch_size
             str(temp_translation)
         ]
 

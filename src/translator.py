@@ -219,7 +219,7 @@ class Translator:
                     **inputs,
                     forced_bos_token_id=self.target_lang_id,
                     max_length=512,
-                    num_beams=5,
+                    num_beams=8,
                     early_stopping=True
                 )
 
